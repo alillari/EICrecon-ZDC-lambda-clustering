@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <algorithms/algorithm.h>
 #include <DD4hep/BitFieldCoder.h>
@@ -99,6 +100,21 @@ namespace eicrecon {
     		return neighbors;
 	}
 
+	std::unordered_set<size_t> getNeighborIndices(const edm4eic::CalorimeterHit& targetHit, const edm4eic::CalorimeterHitCollection& allHits) const {
+		std::unordered_set<size_t> neighbors;
+    
+		for (size_t i = 0; i < allHits.size(); i++) {
+   			const edm4eic::CalorimeterHit& hit = allHits.at(i);
+			if (!(hit.getEnergy() == targetHit.getEnergy() && hit.getPosition() == targetHit.getPosition() && hit.getTime() == targetHit.getTime())) {
+    				// Check if hit qualifies as a neighbor
+    				if (hit.getEnergy() >= minHitEnergy && is_neighbor(targetHit, hit)) {
+    					neighbors.add(i);
+				}
+			}
+		}
+
+    		return neighbors;
+	}	
 	
 	// Function to calculate the total energy of neighbors
 	double calculateTotalNeighborEnergy(const edm4eic::CalorimeterHit& hit, const edm4eic::CalorimeterHitCollection& neighbors) const {
@@ -109,7 +125,6 @@ namespace eicrecon {
 	}
 
 
-	// Function to pull total number of neighbors
 	int totalNumberofNeighbors(const edm4eic::CalorimeterHit& hit, const edm4eic::CalorimeterHitCollection& allHits) const {
 		auto neighbors = getNeighbors(hit, allHits);
 		return neighbors.size();
@@ -192,7 +207,7 @@ namespace eicrecon {
 		return cluster_energy;
 	}
 
-	std::optional<std::unordered_map<int, edm4eic::CalorimeterHitCollection>> sortMaxClusters(std::unordered_map<int, edm4eic::CalorimeterHitCollection> max_clusters){
+	std::optional<std::unordered_map<int, edm4eic::CalorimeterHitCollection>> retrieveGammaClusters(std::unordered_map<int, edm4eic::CalorimeterHitCollection> max_clusters){
 		std::unordered_map<int, edm4eic::CalorimeterHitCollection> copied_clusters(max_clusters)
 		
 		if(max_clusters.size() != 3){
@@ -213,8 +228,66 @@ namespace eicrecon {
 		}
 	}
 
+	int findHitinCollection(const edm4eic::CalroimeterHitCollection& allHits, edm4eic::CalorimeterHit& targetHit){
+		for(size_t i = 0; i <allHits.size(); i++){
+			const auto& hit = allHits.at(i);
+			if(hit.getPosition().x == targetHit.getPosition().x &&
+            		hit.getPosition().y == targetHit.getPosition().y &&
+            		hit.getPosition().z == targetHit.getPosition().z &&
+            		hit.getEnergy() == targetHit.getEnergy()){return i}
+		}
+		return -1;
+	}
 
-	
+	edm4eic::ProtoCluster expandGammaCluster(edm4eic::CalorimeterHitCollection& peakHits, edm4eic::CalorimeterHitCollection& allHits, std::unordered_set<size_t>& usedHits){
+    		edm4eic::ProtoCluster protocluster;
+
+		int primaryPeakIndex = 0;
+		int primaryPeakIndexinAllHits = findHitCollection(allHits, peakHits.at(0));
+		if(usedHits.find(primaryPeakIndexinAllHits) != usedHits.end() || primaryPeakIndexinAllHits == -1){return protocluster;}
+		protocluster.addToHits(peakHits.at(0));
+
+		if(peakHits.size() > 1){
+			for(size_t i = 1; i < allHits.size(); i++){
+				size_t peak_hit_index = findHitinCollection(allHits, peakHits.at(i));
+				if(usedHits.find(peak_hit_index) != usedHits.end()){return protocluster;}
+				protocluster.AddtoHits(peakHit.at(i));
+				protocluster.AddtoWeights(1);
+				if(peakHits.at(i).getEnergy() > peakHits.at(primaryPeakIndex).getEnergy()){primaryPeakIndex = i;}
+			}	
+		}
+
+		std::vector<size_t> expansionQueue;
+		expansionQueue.push_back(primaryPeakIndex);
+
+		while(!expansionQueue.empty()){
+			size_t current_index = expansionQueue.back();
+			expansionQueue.pop_back();
+
+			const auto& currentHit = allHits.at(current_index);
+
+
+		
+			for (size_t i = 0; i < allHits.size(); ++i) {
+            			if (usedHits.count(i)) continue; // Skip already assigned hits
+
+            			const auto& neighborHit = allHits.at(i);
+
+            			// Check energy and distance conditions
+            			if (neighborHit.getEnergy() <= currentHit.getEnergy()) {
+                			auto [xyDist, zDist] = CalculateDistances(currentHit, neighborHit);
+                			if (xyDist <= maxXYDistance && zDist <= maxZDistance) {
+                    				// Add neighbor to ProtoCluster
+                    				protoCluster.addToHits(neighborHit);
+                    				protoCluster.addToWeights(1.0);
+                    				usedHits.insert(i);
+                    				expansionQueue.push_back(i); // Add to queue for further expansion
+                			}
+            			}	
+			}
+			
+		}
+
 
     };
 
